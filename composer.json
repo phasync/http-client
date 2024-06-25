@@ -16,7 +16,7 @@
     ],
     "minimum-stability": "stable",
     "require": {
-        "phasync/phasync": "dev-main",
+        "phasync/phasync": "^1.0.7",
         "charm/options": "^1.1.5"
     },
     "require-dev": {
