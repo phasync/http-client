@@ -1,0 +1,31 @@
+{
+    "name": "phasync/http-client",
+    "description": "An async PSR-18 HTTP Client implementation.",
+    "type": "library",
+    "license": "MIT",
+    "autoload": {
+        "psr-4": {
+            "phasync\\HttpClient\\": "src/"
+        }
+    },
+    "authors": [
+        {
+            "name": "Frode Børli",
+            "email": "frode@ennerd.com"
+        }
+    ],
+    "minimum-stability": "stable",
+    "require": {
+        "phasync/phasync": "dev-main",
+        "charm/options": "^1.1.5"
+    },
+    "require-dev": {
+        "pestphp/pest": "^2.34",
+        "friendsofphp/php-cs-fixer": "^3.59"
+    },
+    "config": {
+        "allow-plugins": {
+            "pestphp/pest-plugin": true
+        }
+    }
+}
