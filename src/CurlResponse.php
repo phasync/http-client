@@ -3,12 +3,11 @@
 namespace phasync\HttpClient;
 
 use phasync;
-use phasync\Interfaces\QueueInterface;
-use phasync\Internal\ExceptionTool;
 use phasync\Psr\ComposableStream;
 use phasync\Services\CurlMulti;
 use phasync\TimeoutException;
-use phasync\Util\Collections\Queue;
+use phasync\Util\Queue;
+use phasync\Util\QueueInterface;
 use phasync\Util\Synchronized;
 use Psr\Http\Message\MessageInterface;
 use Psr\Http\Message\ResponseInterface;
@@ -44,7 +43,7 @@ class CurlResponse implements ResponseInterface
      * the HttpClient to be used outside of phasync while still supporting
      * concurrent fetching.
      *
-     * @var QueueInterface<CurlResponse>
+     * @var QueueInterface<CurlResponse>|null
      */
     private static ?QueueInterface $fetchQueue = null;
 
@@ -58,6 +57,7 @@ class CurlResponse implements ResponseInterface
             });
         }
         $this->curl = \curl_init($url);
+        \curl_setopt($this->curl, \CURLOPT_NOPROGRESS, false);
         switch (\strtoupper($method)) {
             case 'GET':
                 // For GET requests, if there is any request data, append it to the URL
@@ -77,9 +77,9 @@ class CurlResponse implements ResponseInterface
                 }
                 if (null !== $queryString) {
                     if (\str_contains($url, '?')) {
-                        $url .= '&' . $requestData;
+                        $url .= '&' . $queryString;
                     } else {
-                        $url .= '?' . $requestData;
+                        $url .= '?' . $queryString;
                     }
                 }
                 \curl_setopt($this->curl, \CURLOPT_URL, $url);
@@ -89,12 +89,10 @@ class CurlResponse implements ResponseInterface
                 \curl_setopt($this->curl, \CURLOPT_POST, true);
                 \curl_setopt($this->curl, \CURLOPT_POSTFIELDS, $requestData);
                 break;
-            case 'PUT':
-                // For PUT requests, set the request data as the PUTFIELDS option
-                \curl_setopt($this->curl, \CURLOPT_PUT, true);
-                \curl_setopt($this->curl, \CURLOPT_POSTFIELDS, $requestData);
-                break;
             default:
+                // Also handles 'PUT': CURLOPT_CUSTOMREQUEST plus CURLOPT_POSTFIELDS sends the
+                // given body with any method. CURLOPT_PUT is a different, incompatible mode
+                // that reads the body from CURLOPT_INFILE and ignores CURLOPT_POSTFIELDS.
                 // For other request methods, set the request data as the custom request body
                 \curl_setopt($this->curl, \CURLOPT_CUSTOMREQUEST, $method);
                 \curl_setopt($this->curl, \CURLOPT_POSTFIELDS, $requestData);
@@ -312,7 +310,7 @@ class CurlResponse implements ResponseInterface
 
     private function throwError(): void
     {
-        throw ExceptionTool::popTrace(new \RuntimeException($this->errorMessage ?? 'Error code ' . $this->errorNumber, $this->errorNumber));
+        throw new \RuntimeException($this->errorMessage ?? 'Error code ' . $this->errorNumber, $this->errorNumber);
     }
 
     private function curlHeaderFunction($curl, $header)
@@ -322,12 +320,15 @@ class CurlResponse implements ResponseInterface
             return \strlen($header);  // Ignore empty lines, which can occur in HTTP responses.
         }
 
-        if (null === $this->statusCode && \str_starts_with($trimmed, 'HTTP/')) {
-            // Parse status line
+        if (\str_starts_with($trimmed, 'HTTP/')) {
+            // A new status line. cURL invokes this callback once per redirect
+            // hop when following redirects, so every hop's headers are reset
+            // here to keep only the final hop's status and headers.
             [$protocol, $code, $phrase] = \explode(' ', $trimmed, 3) + [null, null, null];
             $this->protocolVersion      = \substr($protocol, \strpos($protocol, '/') + 1);
             $this->statusCode           = \intval($code);
             $this->reasonPhrase         = $phrase ?: '';
+            $this->responseHeaders      = [];
 
             return \strlen($header);
         }
@@ -417,10 +418,8 @@ class CurlResponse implements ResponseInterface
             'resumeFrom'            => \CURLOPT_RESUME_FROM,
             'ipResolve'             => \CURLOPT_IPRESOLVE,
         ] as $prop => $opt) {
-            if (null !== $options[$prop]) {
-                if (\CURLOPT_TIMEOUT_MS === $opt) {
-                }
-                \curl_setopt($this->curl, $opt, $options[$prop]);
+            if (null !== $options->$prop) {
+                \curl_setopt($this->curl, $opt, $options->$prop);
             }
         }
     }

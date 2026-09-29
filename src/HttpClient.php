@@ -2,13 +2,12 @@
 
 namespace phasync\HttpClient;
 
-use Charm\Options\IllegalOperationException;
-use Charm\Options\UnknownOptionException;
-use phasync\Psr\MultipartStreamInterface;
 use phasync\Psr\Request;
+use phasync\Psr\StreamFactory;
 use Psr\Http\Client\ClientInterface;
 use Psr\Http\Message\RequestInterface;
 use Psr\Http\Message\ResponseInterface;
+use Psr\Http\Message\StreamInterface;
 use Psr\Http\Message\UriInterface;
 
 /**
@@ -20,51 +19,74 @@ final class HttpClient implements ClientInterface
     private HttpClientOptions $options;
 
     /**
-     * Enables middleware
+     * The head of the middleware chain. Initially a terminal handler that
+     * performs the real request; each {@see self::addMiddlewareFunction()}
+     * call wraps it in a new handler.
      */
-    private ?ClientInterface $client = null;
+    private ClientInterface $handler;
 
     public function __construct(array|HttpClientOptions $defaultRequestOptions = [])
     {
         $this->options = HttpClientOptions::create($defaultRequestOptions);
+        $this->handler = new class($this) implements ClientInterface {
+            public function __construct(private HttpClient $client)
+            {
+            }
+
+            public function sendRequest(RequestInterface $request): ResponseInterface
+            {
+                return $this->client->doSendRequest($request);
+            }
+        };
     }
 
     /**
      * Wrap the sendRequest method. Example:
      *
      * $client->addMiddlewareFunction(
-     *     function(RequestInterface $request, ClientInterface $client): ResponseInterface {
+     *     function(RequestInterface $request, ClientInterface $next): ResponseInterface {
      *         // Do stuff with request here
-     *         $response = $client->sendRequest($request);
+     *         $response = $next->sendRequest($request);
      *         // Do stuff with response here
      *         return $response;
      *     }
      * );
      *
-     * @param \Closure<RequestInterface,ClientInterface,ResponseInterface> $middleware
+     * Each middleware wraps every one added before it, so the last one
+     * added is the outermost: it runs first, and its `$next` calls into
+     * the previous one, and so on down to the client's own request
+     * handling.
      *
-     * @return void
+     * @param \Closure(RequestInterface,ClientInterface):ResponseInterface $middleware
      */
-    public function addMiddlewareFunction(\Closure $middleware)
+    public function addMiddlewareFunction(\Closure $middleware): void
     {
-        $client       = $this->client ?? $this;
-        $this->client = new class($client, $middleware) extends ClientInterface {
-            public function __construct(private ClientInterface $client, private \Closure $middleware)
+        $next          = $this->handler;
+        $this->handler = new class($next, $middleware) implements ClientInterface {
+            public function __construct(private ClientInterface $next, private \Closure $middleware)
             {
             }
 
             public function sendRequest(RequestInterface $request): ResponseInterface
             {
-                return ($this->middleware)($request, $this->client);
+                return ($this->middleware)($request, $this->next);
             }
         };
     }
 
     public function sendRequest(RequestInterface $request): ResponseInterface
     {
-        if (null !== $this->client) {
-            return ($this->client)($request);
-        }
+        return $this->handler->sendRequest($request);
+    }
+
+    /**
+     * Performs the actual HTTP request via cURL. Used as the innermost
+     * handler of the middleware chain; not part of the public API.
+     *
+     * @internal
+     */
+    public function doSendRequest(RequestInterface $request): ResponseInterface
+    {
         $method  = $request->getMethod();
         $uri     = $request->getUri();
         $options = [
@@ -86,7 +108,7 @@ final class HttpClient implements ClientInterface
         $body = $request->getBody();
 
         if ($body instanceof MultipartStreamInterface) {
-            $options['headers']['content-type'] = [$body->getContentType()];
+            $options['headers'][] = 'Content-Type: ' . $body->getContentType();
         }
 
         return new CurlResponse($method, $uri, $body, $this->options->overrideFrom($options));
@@ -98,8 +120,7 @@ final class HttpClient implements ClientInterface
      * @param string|UriInterface $url    The URL to fetch from
      * @param string              $method The method
      *
-     * @throws UnknownOptionException
-     * @throws IllegalOperationException
+     * @throws \InvalidArgumentException if an unknown option is passed in `$options`
      *
      * @return CurlResponse
      */
@@ -124,7 +145,7 @@ final class HttpClient implements ClientInterface
             $headers['cookie'] = [$options->cookie];
         }
 
-        if (\is_array($requestData) || \is_object($requestData)) {
+        if (!$requestData instanceof StreamInterface && (\is_array($requestData) || \is_object($requestData))) {
             if (!empty($headers['content-type'])) {
                 switch ($headers['content-type'][0]) {
                     case 'application/x-www-form-urlencoded':
@@ -142,14 +163,19 @@ final class HttpClient implements ClientInterface
             }
         }
 
-        $request = new Request($method, $url, $headers, $requestData);
+        $request = Request::create($method, $url);
+        foreach ($headers as $name => $values) {
+            $request = $request->withHeader($name, $values);
+        }
+        $request = $request->withBody(StreamFactory::create($requestData));
 
         $oldOptions    = $this->options;
-        $this->options = $this->options->overrideFrom($options);
-        $result        = $this->sendRequest($request);
-        $this->options = $oldOptions;
-
-        return $result;
+        $this->options = $options;
+        try {
+            return $this->sendRequest($request);
+        } finally {
+            $this->options = $oldOptions;
+        }
     }
 
     public function get(string|UriInterface $url, array|HttpClientOptions|null $options = null): ResponseInterface
@@ -164,6 +190,6 @@ final class HttpClient implements ClientInterface
 
     public function put(string|UriInterface $url, mixed $requestData, array|HttpClientOptions|null $options = null): ResponseInterface
     {
-        return $this->request('PUT', $url, $requestData, $this->options->overrideFrom($options));
+        return $this->request('PUT', $url, $requestData, $options);
     }
 }

@@ -1,16 +1,8 @@
 # phasync/http-client
 
-The phasync HTTP Client is a powerful, fiber-based HTTP client for PHP, leveraging the concurrency features of PHP Fibers to manage non-blocking requests efficiently. This client is compliant with PSR-18 and allows extensive configuration via cURL options to tailor request handling according to your needs.
-
-## Features
-
-- **Concurrent HTTP requests**: Utilizes PHP fibers to perform non-blocking HTTP requests.
-- **Full PSR-18 compatibility**: Fully compliant with the PSR-18 interface for HTTP clients.
-- **Extensive configuration**: Customize every aspect of HTTP requests using a wide range of cURL options.
+A fiber-based, PSR-18 compliant HTTP client for PHP, built on [phasync](https://github.com/phasync/phasync) 2 and its `src/Psr` PSR-7/PSR-17 implementation. Concurrent requests run in parallel via `curl_multi`, with extensive configuration through cURL options.
 
 ## Installation
-
-Use Composer to install the Phasync HTTP Client in your project:
 
 ```bash
 composer require phasync/http-client
@@ -18,79 +10,100 @@ composer require phasync/http-client
 
 ## Usage
 
-### Basic Usage
-
-Here is a simple example of making concurrent GET request:
+### Basic usage
 
 ```php
 use phasync\HttpClient\HttpClient;
 
 $client = new HttpClient();
-// Concurrent requests:
-$response1 = $client->get('https://httpbin.org/get');
-$response2 = $client->get('https://www.reddit.com/");
-// All requests are performed in parallel using `curl_multi` under the hood.
+// Concurrent requests: neither one actually starts fetching until its body
+// is read, so both run together under one curl_multi batch.
+$response1 = $client->get('https://example.com/a');
+$response2 = $client->get('https://example.com/b');
 echo $response1->getBody();
-echo $resposne2->getBody();
+echo $response2->getBody();
 ```
 
-### POST Request
+Inside a coroutine (`phasync::run()` / `phasync::go()`), several `sendRequest()` calls started in different coroutines run concurrently the same way.
 
-To send a POST request with data:
+### POST request
 
 ```php
-$response = $client->post('https://httpbin.org/post', [
-    'foo' => 'bar'
-]);
+$response = $client->post('https://example.com/post', ['foo' => 'bar']);
 echo $response->getBody();
 ```
 
-### PSR-18 Client Usage
+A string, a PSR-7 `StreamInterface` (including a plain resource wrapped in `phasync\Psr\ResourceStream`), or an array/object (encoded as `application/x-www-form-urlencoded` or JSON, based on the `Content-Type` header) may be given as the body.
 
-The client supports the PSR-18 client specification:
+### Multipart uploads
+
+```php
+use phasync\HttpClient\MultipartStream;
+
+$body = new MultipartStream([
+    'title'      => 'My upload',
+    'attachment' => fopen('/path/to/file.txt', 'r'),
+]);
+$response = $client->post('https://example.com/upload', $body);
+```
+
+`MultipartStream::getContentType()` supplies the `Content-Type` header (including the boundary) automatically. The whole body is read into memory before the request is sent (cURL's own requirement), so this does not stream large uploads with bounded memory.
+
+### PSR-18 client usage
 
 ```php
 $psr7Response = $client->sendRequest($psr7Request);
 ```
 
-### Handling Redirects
+### Middleware
 
-Automatically handle redirects:
+```php
+$client->addMiddlewareFunction(
+    function (RequestInterface $request, ClientInterface $next): ResponseInterface {
+        // ... inspect/modify $request ...
+        $response = $next->sendRequest($request);
+        // ... inspect/modify $response ...
+        return $response;
+    }
+);
+```
+
+Each middleware wraps every one added before it, so the last one added runs first (outermost) and its `$next` calls into the previous one.
+
+### Redirects and timeouts
 
 ```php
 $client = new HttpClient([
-    'followLocation' => true
-]);
-$response = $client->get('https://httpbin.org/redirect-to?url=http%3A%2F%2Fexample.com');
-```
-
-### Custom cURL Options
-
-Customize client behavior by setting cURL options:
-
-```php
-$client = new HttpClient([
-    'timeoutMs' => 1000,
-    'userAgent' => 'PhasyncClient/1.0'
+    'followLocation' => true,   // default
+    'maxRedirs'      => 20,
+    'timeoutMs'      => 5000,
 ]);
 ```
 
-## Configuration Options
+Options passed to `get()`/`post()`/`put()`/`request()` override the client's defaults for that one call only.
 
-The `HttpClientOptions` class provides a way to configure a variety of options for handling requests:
+## Configuration options
 
-- `userAgent`: Set the 'User-Agent' header.
-- `timeoutMs`: Maximum number of milliseconds to allow cURL functions to execute.
-- `followLocation`: Follow redirects.
-- `sslVerifyPeer`: Verify the peer's SSL certificate.
-- And many more detailed in the class definition.
+`HttpClientOptions` mirrors cURL options as plain, mostly-nullable properties: `userAgent`, `timeoutMs`, `connectTimeoutMs`, `followLocation`, `maxRedirs`, `sslVerifyPeer`, `cookie`, `proxy`, and more. See [`src/HttpClientOptions.php`](src/HttpClientOptions.php) for the full, documented list.
 
-Refer to the [`HttpClientOptions`](src/HttpClientOptions.php) class for a comprehensive list of all configurable options.
+## Cancellation and timeouts inside a coroutine
 
-## Contributing
+`phasync::cancel($fiber)` on a coroutine that is awaiting a request throws `phasync\CancelledException` from it; the client and its underlying `curl_multi` service remain usable for subsequent requests. A `timeoutMs` option aborts a request via cURL's own timeout and throws a `RuntimeException`.
 
-Contributions are welcome! Please feel free to submit pull requests or create issues for bugs and feature requests.
+## Requirements
+
+- PHP 8.2+
+- `phasync/phasync` 2.0 (alpha)
+
+No other runtime dependencies: this client uses phasync's own `src/Psr` PSR-7/PSR-17 implementation exclusively.
+
+## Development
+
+```bash
+composer install
+composer test          # once with phasync/phasync
+```
 
 ## License
 
-This project is open-sourced software licensed under the [MIT license](LICENSE).
+MIT, see [LICENSE](LICENSE).

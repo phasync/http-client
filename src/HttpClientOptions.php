@@ -2,9 +2,12 @@
 
 namespace phasync\HttpClient;
 
-use Charm\AbstractOptions;
-
-class HttpClientOptions extends AbstractOptions
+/**
+ * A plain options holder for {@see HttpClient} and {@see CurlResponse}. Every
+ * option defaults to `null`, meaning "not set" / "use cURL's own default",
+ * except where noted otherwise.
+ */
+class HttpClientOptions
 {
     /**
      * The contents of the "User-Agent: " header to be used in a HTTP request.
@@ -270,4 +273,61 @@ class HttpClientOptions extends AbstractOptions
      * array("example.com:80:127.0.0.1")
      */
     public ?array $resolve = null;
+
+    /**
+     * @param array<string,mixed> $options Option values keyed by property name
+     *
+     * @throws \InvalidArgumentException if an unknown option is given
+     */
+    public function __construct(array $options = [])
+    {
+        foreach ($options as $key => $value) {
+            if (!\property_exists($this, $key)) {
+                throw new \InvalidArgumentException("Unknown HttpClientOptions option '{$key}'");
+            }
+            $this->$key = $value;
+        }
+    }
+
+    /**
+     * Normalizes an array, an existing instance, or null into an instance.
+     */
+    public static function create(array|self|null $options): self
+    {
+        if ($options instanceof self) {
+            return $options;
+        }
+
+        return new self($options ?? []);
+    }
+
+    /**
+     * Returns a clone of this instance with every non-null option from
+     * `$options` applied on top of it. `null` values are treated as "not
+     * provided" and never overwrite an existing value.
+     *
+     * @throws \InvalidArgumentException if an unknown option is given
+     */
+    public function overrideFrom(array|self|null $options): self
+    {
+        $clone = clone $this;
+
+        if (null === $options) {
+            return $clone;
+        }
+
+        $overrides = $options instanceof self ? \get_object_vars($options) : $options;
+
+        foreach ($overrides as $key => $value) {
+            if (null === $value) {
+                continue;
+            }
+            if (!\property_exists($clone, $key)) {
+                throw new \InvalidArgumentException("Unknown HttpClientOptions option '{$key}'");
+            }
+            $clone->$key = $value;
+        }
+
+        return $clone;
+    }
 }
