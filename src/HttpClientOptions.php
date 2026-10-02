@@ -3,9 +3,21 @@
 namespace phasync\HttpClient;
 
 /**
- * A plain options holder for {@see HttpClient} and {@see CurlResponse}. Every
- * option defaults to `null`, meaning "not set" / "use cURL's own default",
- * except where noted otherwise.
+ * The options of an HTTP request, as public properties that map to cURL options.
+ *
+ * Every option defaults to `null`, meaning "not set": cURL's own default applies. The exception is
+ * `followLocation`, which defaults to `true`. Give an instance, or an array keyed by property
+ * name, to the {@see HttpClient} constructor for defaults, or to a request method for one request.
+ *
+ * ```php
+ * $options = new HttpClientOptions(['timeoutMs' => 3000, 'userAgent' => 'my-app/1.0']);
+ * $client  = new HttpClient($options);
+ *
+ * $client->get('https://example.com/slow', ['timeoutMs' => 30000]);
+ * ```
+ *
+ * @see HttpClient
+ * @see HttpClientOptions::overrideFrom
  */
 class HttpClientOptions
 {
@@ -112,25 +124,15 @@ class HttpClientOptions
     public ?bool $sslVerifyPeer = null;
 
     /**
-     * false to stop cURL from verifying the peer's certificate.
-     * Alternate certificates to verify against can be specified
-     * with the CURLOPT_CAINFO option or a certificate directory
-     * can be specified with the CURLOPT_CAPATH option. When set
-     * to false, the peer certificate verification succeeds
-     * regardless.
+     * false to stop cURL from verifying the HTTPS proxy's certificate.
+     * When false, the verification succeeds regardless.
      */
     public ?bool $proxySslVerifyPeer = null;
 
     /**
-     * Set to 2 to verify in the HTTPS proxy's certificate name
-     * fields against the proxy name. When set to 0 the connection
-     * succeeds regardless of the names used in the certificate.
-     * Use that ability with caution! 1 treated as a debug option
-     * in curl 7.28.0 and earlier. From curl 7.28.1 to 7.65.3
-     * CURLE_BAD_FUNCTION_ARGUMENT is returned. From curl 7.66.0
-     * onwards 1 and 2 is treated as the same value. In production
-     * environments the value of this option should be kept at 2
-     * (default value).
+     * false to accept the HTTPS proxy's certificate whatever names it
+     * holds; by default cURL verifies them against the proxy name. Use
+     * with caution.
      */
     public ?bool $proxySslVerifyHost = null;
 
@@ -175,7 +177,8 @@ class HttpClientOptions
      * to execute. If libcurl is built to use the standard system
      * name resolver, that portion of the connect will still use
      * full-second resolution for timeouts with a minimum timeout
-     * allowed of one second.
+     * allowed of one second. A transfer that exceeds it fails with a
+     * `\RuntimeException` when the response is read.
      */
     public ?int $timeoutMs = null;
 
@@ -275,9 +278,15 @@ class HttpClientOptions
     public ?array $resolve = null;
 
     /**
+     * Create the options from an array of values keyed by property name.
+     *
+     * ```php
+     * $options = new HttpClientOptions(['followLocation' => false, 'maxRedirs' => 0]);
+     * ```
+     *
      * @param array<string,mixed> $options Option values keyed by property name
      *
-     * @throws \InvalidArgumentException if an unknown option is given
+     * @throws \InvalidArgumentException for an option name that is not a property
      */
     public function __construct(array $options = [])
     {
@@ -290,7 +299,9 @@ class HttpClientOptions
     }
 
     /**
-     * Normalizes an array, an existing instance, or null into an instance.
+     * Turn an array, an instance or null into an instance.
+     *
+     * @internal
      */
     public static function create(array|self|null $options): self
     {
@@ -302,11 +313,22 @@ class HttpClientOptions
     }
 
     /**
-     * Returns a clone of this instance with every non-null option from
-     * `$options` applied on top of it. `null` values are treated as "not
-     * provided" and never overwrite an existing value.
+     * Return a copy of this instance with the non-null values of `$options` applied on top.
      *
-     * @throws \InvalidArgumentException if an unknown option is given
+     * A `null` value never overwrites a set option, so a default cannot be cleared this way. An
+     * array value replaces the old array. `false` and `0` are values like any other.
+     *
+     * ```php
+     * $defaults = new HttpClientOptions(['timeoutMs' => 5000, 'headers' => ['Accept: text/html']]);
+     * $one      = $defaults->overrideFrom(['timeoutMs' => 100]);
+     * // $one->timeoutMs is 100, $one->headers is still ['Accept: text/html']; $defaults is unchanged
+     * ```
+     *
+     * @param array<string,mixed>|self|null $options The values to apply
+     *
+     * @throws \InvalidArgumentException for an option name that is not a property
+     *
+     * @see HttpClient::request
      */
     public function overrideFrom(array|self|null $options): self
     {

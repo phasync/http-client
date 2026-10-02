@@ -5,18 +5,30 @@ namespace phasync\HttpClient;
 use Psr\Http\Message\StreamInterface;
 
 /**
- * A request body stream representing a `multipart/form-data` payload.
+ * A request body stream that carries a `multipart/form-data` payload.
  *
- * {@see HttpClient::sendRequest()} recognizes any body implementing this
- * interface and sends {@see self::getContentType()} as the request's
- * "Content-Type" header (including the boundary), instead of requiring the
- * caller to set it manually.
+ * {@see HttpClient::sendRequest()} sends {@see self::getContentType()}, boundary included, as the
+ * `Content-Type` header of a request whose body implements this interface, so the caller sets
+ * none. Implement it for a body that is built elsewhere than {@see MultipartStream}.
+ *
+ * ```php
+ * $body = new MultipartStream(['title' => 'Report', 'file' => \fopen('report.pdf', 'r')]);
+ * $client->post('https://example.com/upload', $body); // Content-Type: $body->getContentType()
+ * ```
+ *
+ * @see MultipartStream
+ * @see HttpClient::post
  */
 interface MultipartStreamInterface extends StreamInterface
 {
     /**
-     * The full value for the "Content-Type" header, including the boundary
-     * parameter (e.g. `multipart/form-data; boundary=...`).
+     * Return the value of the `Content-Type` header, with the boundary parameter.
+     *
+     * ```php
+     * echo $body->getContentType(); // multipart/form-data; boundary=phasync4f2a...
+     * ```
+     *
+     * @see MultipartStream::__construct
      */
     public function getContentType(): string;
 }

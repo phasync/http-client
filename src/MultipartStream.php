@@ -5,7 +5,7 @@ namespace phasync\HttpClient;
 use phasync\Psr\ComposableStream;
 
 /**
- * Builds a `multipart/form-data` request body from a nested array of fields.
+ * A `multipart/form-data` request body built from a nested array of fields.
  *
  * Scalar and {@see \Stringable} values become plain form fields. A `resource`
  * (as returned by `fopen()`) or an `\SplFileInfo` becomes a file part, using
@@ -25,13 +25,25 @@ use phasync\Psr\ComposableStream;
  * The whole body is built lazily while it is read, but note that cURL reads
  * the entire body into memory up front (via `__toString()`) before a request
  * is sent, so this does not stream large uploads with bounded memory.
+ *
+ * @see MultipartStreamInterface
+ * @see HttpClient::post
  */
 final class MultipartStream extends ComposableStream implements MultipartStreamInterface
 {
     private string $boundary;
 
     /**
-     * @param array<string,mixed> $fields
+     * Create the body from the fields.
+     *
+     * ```php
+     * $body = new MultipartStream(['name' => 'Frode', 'files' => [\fopen('a.txt', 'r'), \fopen('b.txt', 'r')]]);
+     * ```
+     *
+     * @param array<string,mixed> $fields   Field name to value: a scalar, a Stringable, a stream resource, an SplFileInfo, or a nested array
+     * @param string|null         $boundary The boundary string; random when null
+     *
+     * @see MultipartStream::getContentType
      */
     public function __construct(array $fields, ?string $boundary = null)
     {
@@ -54,6 +66,16 @@ final class MultipartStream extends ComposableStream implements MultipartStreamI
         });
     }
 
+    /**
+     * Return the `Content-Type` header value, `multipart/form-data` with this body's boundary.
+     *
+     * ```php
+     * $body = new MultipartStream(['a' => '1'], 'my-boundary');
+     * echo $body->getContentType(); // multipart/form-data; boundary=my-boundary
+     * ```
+     *
+     * @see MultipartStreamInterface::getContentType
+     */
     public function getContentType(): string
     {
         return "multipart/form-data; boundary={$this->boundary}";
