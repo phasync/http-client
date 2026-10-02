@@ -21,7 +21,7 @@ use Psr\Http\Message\UriInterface;
  * keeps streaming after it returns, and a failure while reading it is thrown from the stream read.
  * An HTTP error status such as 404 or 500 is a normal response and throws nothing.
  *
- * `get()`, `post()`, `put()` and `request()` are not PSR-18: they return a {@see CurlResponse} at
+ * `sendAsyncRequest()`, `get()`, `post()`, `put()` and `request()` are not PSR-18: they return a {@see CurlResponse} at
  * once, before the transfer has started, so that several requests can run together. The transfer
  * starts when the response's status, headers or body is first read, every request created up to
  * then starts together, and a failure is thrown by that first read.
@@ -175,11 +175,35 @@ final class HttpClient implements ClientInterface
      */
     public function sendRequest(RequestInterface $request): ResponseInterface
     {
-        $response = $this->handler->sendRequest($request);
+        $response = $this->sendAsyncRequest($request);
         // Reading the status waits for the headers, and throws the failure of a transfer that has none.
         $response->getStatusCode();
 
         return $response;
+    }
+
+    /**
+     * Send a PSR-7 request without waiting: the lazy counterpart of {@see HttpClient::sendRequest()}.
+     *
+     * Returns a {@see CurlResponse} before the transfer has started. The transfer starts when the
+     * response's status, headers or body is first read, together with every other request created
+     * up to then, so several requests run concurrently without any coroutines in your code. A
+     * failure is thrown by that first read, with the same exceptions as `sendRequest()`.
+     *
+     * ```php
+     * use phasync\Psr\Request;
+     *
+     * $a = $client->sendAsyncRequest(Request::create('GET', 'https://example.com/a'));
+     * $b = $client->sendAsyncRequest(Request::create('GET', 'https://example.com/b'));
+     * echo $a->getStatusCode(), ' ', $b->getStatusCode(); // both transfers run together
+     * ```
+     *
+     * @see HttpClient::sendRequest
+     * @see HttpClient::request
+     */
+    public function sendAsyncRequest(RequestInterface $request): ResponseInterface
+    {
+        return $this->handler->sendRequest($request);
     }
 
     /**
@@ -305,7 +329,7 @@ final class HttpClient implements ClientInterface
         $oldOptions    = $this->options;
         $this->options = $options;
         try {
-            return $this->handler->sendRequest($request);
+            return $this->sendAsyncRequest($request);
         } finally {
             $this->options = $oldOptions;
         }

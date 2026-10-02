@@ -113,3 +113,31 @@ test('a slow request runs concurrently with a fast one, not after it', function 
         expect(\microtime(true) - $t)->toBeLessThan($baseline * 1.6);
     });
 });
+
+test('sendAsyncRequest() is lazy: concurrent PSR-7 requests overlap outside a coroutine', function () {
+    retryFlakyTiming(function () {
+        $client   = new HttpClient();
+        $baseline = measureSingleDelayRequest($client, 1);
+
+        $t = \microtime(true);
+        $a = $client->sendAsyncRequest(phasync\Psr\Request::create('GET', TestServer::baseUrl() . '/delay/1'));
+        $b = $client->sendAsyncRequest(phasync\Psr\Request::create('GET', TestServer::baseUrl() . '/delay/1'));
+        expect(\microtime(true) - $t)->toBeLessThan(0.2);
+        expect($a->getStatusCode())->toBe(200);
+        expect($b->getStatusCode())->toBe(200);
+        expect(\microtime(true) - $t)->toBeLessThan($baseline * 1.6);
+    });
+});
+
+test('sendAsyncRequest() throws a PSR-18 exception on the first read, not when called', function () {
+    $client   = new HttpClient();
+    $response = $client->sendAsyncRequest(phasync\Psr\Request::create('GET', 'http://127.0.0.1:' . TestServer::unusedPort() . '/get'));
+
+    try {
+        $response->getStatusCode();
+        $failure = null;
+    } catch (Throwable $e) {
+        $failure = $e;
+    }
+    expect($failure)->toBeInstanceOf(Psr\Http\Client\NetworkExceptionInterface::class);
+});

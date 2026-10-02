@@ -24,7 +24,7 @@ echo $response1->getBody();
 echo $response2->getBody();
 ```
 
-Inside a coroutine (`phasync::run()` / `phasync::go()`), several `sendRequest()` calls started in different coroutines run concurrently the same way.
+Inside a coroutine (`phasync::run()` / `phasync::go()`), several `sendRequest()` calls started in different coroutines run concurrently the same way, and `sendAsyncRequest()` gives the lazy, no-coroutines style with a PSR-7 request.
 
 ### POST request
 
@@ -71,7 +71,7 @@ try {
 
 All three extend `\RuntimeException`, and the code is cURL's error number. A 4xx or 5xx response is returned, not thrown. The body keeps streaming after `sendRequest()` returns; if the transfer fails while you read it, the read throws a `NetworkException`.
 
-`get()`, `post()`, `put()` and `request()` are not PSR-18. They return before the transfer has started so that several requests can run together, and a failure is thrown by the first read of the status, headers or body, with the same exceptions.
+`sendAsyncRequest($request)` is the lazy counterpart of `sendRequest()`, for PSR-7 requests; `get()`, `post()`, `put()` and `request()` are lazy too. None of them is PSR-18. They return before the transfer has started so that several requests can run together, and a failure is thrown by the first read of the status, headers or body, with the same exceptions.
 
 ### Middleware
 
