@@ -93,7 +93,7 @@ Options passed to `get()`/`post()`/`put()`/`request()` override the client's def
 ## Requirements
 
 - PHP 8.2+
-- `phasync/phasync` 2.0 (alpha)
+- `phasync/phasync` 2.0 (beta)
 
 No other runtime dependencies: this client uses phasync's own `src/Psr` PSR-7/PSR-17 implementation exclusively.
 
