@@ -52,8 +52,26 @@ $response = $client->post('https://example.com/upload', $body);
 ### PSR-18 client usage
 
 ```php
-$psr7Response = $client->sendRequest($psr7Request);
+use Psr\Http\Client\NetworkExceptionInterface;
+
+try {
+    $psr7Response = $client->sendRequest($psr7Request);
+} catch (NetworkExceptionInterface $e) {
+    // no response: connection refused, DNS failure, TLS failure, timeout; $e->getRequest()
+}
 ```
+
+`sendRequest()` waits (suspending only the calling coroutine) until the response headers have arrived, then returns a complete response, or throws a `Psr\Http\Client\ClientExceptionInterface`:
+
+| Exception | When |
+| --- | --- |
+| `phasync\HttpClient\RequestException` (`RequestExceptionInterface`) | the request is invalid: a URL without a host, an unsupported scheme |
+| `phasync\HttpClient\NetworkException` (`NetworkExceptionInterface`) | no response arrived: refused or reset connection, DNS or TLS failure, timeout |
+| `phasync\HttpClient\ClientException` (`ClientExceptionInterface`) | any other failure, such as too many redirects |
+
+All three extend `\RuntimeException`, and the code is cURL's error number. A 4xx or 5xx response is returned, not thrown. The body keeps streaming after `sendRequest()` returns; if the transfer fails while you read it, the read throws a `NetworkException`.
+
+`get()`, `post()`, `put()` and `request()` are not PSR-18. They return before the transfer has started so that several requests can run together, and a failure is thrown by the first read of the status, headers or body, with the same exceptions.
 
 ### Middleware
 
@@ -88,7 +106,7 @@ Options passed to `get()`/`post()`/`put()`/`request()` override the client's def
 
 ## Cancellation and timeouts inside a coroutine
 
-`phasync::cancel($fiber)` on a coroutine that is awaiting a request throws `phasync\CancelledException` from it; the client and its underlying `curl_multi` service remain usable for subsequent requests. A `timeoutMs` option aborts a request via cURL's own timeout and throws a `RuntimeException`.
+`phasync::cancel($fiber)` on a coroutine that is awaiting a request throws `phasync\CancelledException` from it; the client and its underlying `curl_multi` service remain usable for subsequent requests. A `timeoutMs` option aborts a request via cURL's own timeout and throws a `NetworkException`.
 
 ## Requirements
 
