@@ -32,6 +32,25 @@ if (\preg_match('#^/delay/([0-9.]+)$#', $path, $m)) {
     exit;
 }
 
+if ('/truncated' === $path) {
+    // Announces more bytes than it sends: cURL fails after the headers with "partial file".
+    \header('Content-Type: text/plain');
+    \header('Content-Length: 100');
+    echo 'short';
+    exit;
+}
+
+if (\preg_match('#^/slow-body/([0-9.]+)$#', $path, $m)) {
+    // Headers and the first chunk at once, the rest after the delay.
+    \header('Content-Type: text/plain');
+    echo "first\n";
+    @\ob_flush();
+    \flush();
+    \usleep((int) (((float) $m[1]) * 1_000_000));
+    echo 'second';
+    exit;
+}
+
 if (\preg_match('#^/status/(\d+)$#', $path, $m)) {
     \http_response_code((int) $m[1]);
     exit;

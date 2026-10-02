@@ -13,11 +13,18 @@ use Psr\Http\Message\UriInterface;
 /**
  * A PSR-18 HTTP client that runs concurrent requests on `curl_multi`.
  *
- * `get()`, `post()`, `put()`, `request()` and `sendRequest()` return a {@see CurlResponse} at once.
- * The transfer starts when its status, headers or body is first read, and every request created
- * up to then starts together. Inside a coroutine only the reading coroutine is suspended; outside
- * one, the reading call blocks until the response has arrived. An HTTP error status such as 404 or
- * 500 is a normal response and throws nothing.
+ * `sendRequest()` follows PSR-18: it returns once the response headers have arrived, or throws a
+ * `Psr\Http\Client\ClientExceptionInterface`: {@see RequestException} for an invalid request,
+ * {@see NetworkException} when no response arrives because of a network failure, and
+ * {@see ClientException} for any other failure. Inside a coroutine only the calling coroutine is
+ * suspended while it waits; outside one the call blocks until the response has arrived. The body
+ * keeps streaming after it returns, and a failure while reading it is thrown from the stream read.
+ * An HTTP error status such as 404 or 500 is a normal response and throws nothing.
+ *
+ * `get()`, `post()`, `put()` and `request()` are not PSR-18: they return a {@see CurlResponse} at
+ * once, before the transfer has started, so that several requests can run together. The transfer
+ * starts when the response's status, headers or body is first read, every request created up to
+ * then starts together, and a failure is thrown by that first read.
  *
  * ```php
  * use phasync\HttpClient\HttpClient;
@@ -30,6 +37,13 @@ use Psr\Http\Message\UriInterface;
  *
  * echo $a->getStatusCode(), "\n";
  * echo $b->getBody();
+ *
+ * // PSR-18: returns when the headers have arrived, or throws.
+ * try {
+ *     $response = $client->sendRequest(\phasync\Psr\Request::create('GET', 'https://example.com/c'));
+ * } catch (\Psr\Http\Client\NetworkExceptionInterface $e) {
+ *     echo 'no response: ', $e->getMessage();
+ * }
  * ```
  *
  * Cancelling a coroutine that is waiting for a response throws `phasync\CancelledException` in it.
@@ -38,6 +52,9 @@ use Psr\Http\Message\UriInterface;
  * @see HttpClient::request
  * @see HttpClientOptions
  * @see CurlResponse
+ * @see NetworkException
+ * @see RequestException
+ * @see ClientException
  * @see MultipartStream
  * @see phasync::go
  */
@@ -92,8 +109,11 @@ final class HttpClient implements ClientInterface
      * the outermost: it runs first, and its `$next` calls the previous one, down to the client's
      * own request handling. A middleware that does not call `$next` answers the request itself.
      *
-     * Calling `$next->sendRequest()` returns the response before its transfer has started, like
-     * `sendRequest()` does.
+     * Calling `$next->sendRequest()` returns the response before its transfer has started, unlike
+     * the client's own `sendRequest()`: a failure is thrown when the middleware, or the caller,
+     * first reads the status, the headers or the body, so a middleware that handles failures reads
+     * the status itself. The client's `sendRequest()` waits for the headers after the middleware
+     * chain has returned.
      *
      * ```php
      * $client->addMiddlewareFunction(
@@ -127,25 +147,39 @@ final class HttpClient implements ClientInterface
      *
      * The request's `Cookie` and `User-Agent` headers replace the `cookie` and `userAgent` options,
      * and the other headers are sent as they are. A body that implements {@see MultipartStreamInterface}
-     * also sets the `Content-Type` header. The response is returned before its transfer has started.
+     * also sets the `Content-Type` header. The request is not changed.
      *
-     * A failed transfer (connection refused, DNS failure, timeout, too many redirects) throws a
-     * `\RuntimeException` from the response's `getStatusCode()`, not from here, and not a PSR-18
-     * `ClientExceptionInterface`. The exception code is cURL's error number.
+     * Waits for the response headers, suspending only the calling coroutine, and returns a complete
+     * response: status, reason phrase, protocol version and headers. The body keeps streaming, and
+     * a failure while reading it is thrown from the stream read as a {@see NetworkException}.
+     * A 4xx or 5xx response is returned like any other. The exception code is cURL's error number
+     * and `getRequest()` returns the request.
      *
      * ```php
      * use phasync\Psr\Request;
      *
-     * $response = $client->sendRequest(Request::create('GET', 'https://example.com/'));
-     * echo $response->getStatusCode();
+     * try {
+     *     $response = $client->sendRequest(Request::create('GET', 'https://example.com/'));
+     *     echo $response->getStatusCode();
+     * } catch (\Psr\Http\Client\NetworkExceptionInterface $e) {
+     *     // connection refused, DNS failure, TLS failure, timeout, connection reset
+     * }
      * ```
+     *
+     * @throws RequestException the request is invalid: a URL without a host, or with an unsupported scheme
+     * @throws NetworkException no response headers arrived: connection refused or reset, DNS failure, TLS failure or timeout
+     * @throws ClientException  any other failure, such as too many redirects
      *
      * @see HttpClient::request
      * @see HttpClient::addMiddlewareFunction
      */
     public function sendRequest(RequestInterface $request): ResponseInterface
     {
-        return $this->handler->sendRequest($request);
+        $response = $this->handler->sendRequest($request);
+        // Reading the status waits for the headers, and throws the failure of a transfer that has none.
+        $response->getStatusCode();
+
+        return $response;
     }
 
     /**
@@ -156,8 +190,6 @@ final class HttpClient implements ClientInterface
      */
     public function doSendRequest(RequestInterface $request): ResponseInterface
     {
-        $method  = $request->getMethod();
-        $uri     = $request->getUri();
         $options = [
             'headers'             => [],
         ];
@@ -180,7 +212,7 @@ final class HttpClient implements ClientInterface
             $options['headers'][] = 'Content-Type: ' . $body->getContentType();
         }
 
-        return new CurlResponse($method, $uri, $body, $this->options->overrideFrom($options));
+        return new CurlResponse($request, $this->options->overrideFrom($options));
     }
 
     /**
@@ -194,8 +226,11 @@ final class HttpClient implements ClientInterface
      * encoded by the `Content-Type` header: `application/x-www-form-urlencoded` when there is none,
      * or `application/json` when the header says so. For GET the data goes in the query string.
      *
-     * Returns a {@see CurlResponse} unless a middleware answers with another response. The
-     * transfer starts when the response is first read.
+     * Unlike `sendRequest()` this returns a {@see CurlResponse} unless a middleware answers with
+     * another response, before the transfer has started, so that several requests can run
+     * together. The transfer starts when the response is first read, and a failure of the transfer
+     * is thrown by that read as a {@see NetworkException}, {@see RequestException} or
+     * {@see ClientException}.
      *
      * ```php
      * $response = $client->request('DELETE', 'https://example.com/items/7', null, [
@@ -270,7 +305,7 @@ final class HttpClient implements ClientInterface
         $oldOptions    = $this->options;
         $this->options = $options;
         try {
-            return $this->sendRequest($request);
+            return $this->handler->sendRequest($request);
         } finally {
             $this->options = $oldOptions;
         }

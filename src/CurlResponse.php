@@ -9,21 +9,27 @@ use phasync\Util\Queue;
 use phasync\Util\QueueInterface;
 use phasync\Util\Synchronized;
 use Psr\Http\Message\MessageInterface;
+use Psr\Http\Message\RequestInterface;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\StreamInterface;
 
 /**
  * The PSR-7 response of an {@see HttpClient} request, filled in by a cURL transfer.
  *
- * It exists before the transfer has started. The first call that needs the status line or the
- * headers (`getStatusCode()`, `getHeader()`, `withHeader()` and the like) or the first read of the
- * body starts the transfer and waits for it, suspending only the calling coroutine. `getBody()`
- * itself returns at once. The body is read once: reading it again returns nothing.
+ * {@see HttpClient::sendRequest()} returns a response whose headers have arrived. The convenience
+ * methods `get()`, `post()`, `put()` and `request()` return it before the transfer has started, so
+ * that several requests can run together: the first call that needs the status line or the headers
+ * (`getStatusCode()`, `getHeader()`, `withHeader()` and the like) or the first read of the body
+ * starts every pending transfer and waits for the headers, suspending only the calling coroutine.
+ * `getBody()` itself returns at once. Outside a coroutine that wait runs the transfers to the end.
+ * The body is read once: reading it again returns nothing.
  *
- * A failed transfer (connection refused, DNS failure, timeout, too many redirects) throws a
- * `\RuntimeException` from `getStatusCode()`, with cURL's error number as its code. Call it before
- * reading the body: the body read of a failed transfer can return an empty string without throwing.
- * A 4xx or 5xx status is not a failure.
+ * A transfer that fails before the headers have arrived (connection refused, DNS failure, timeout,
+ * too many redirects, an invalid URL) throws from every accessor, and from the body read, a
+ * {@see NetworkException}, a {@see RequestException} or a {@see ClientException}, with cURL's error
+ * number as its code. A transfer that fails after the headers keeps its status, reason phrase and
+ * headers, and throws the exception when the body read reaches the point of the failure. A 4xx or
+ * 5xx status is not a failure.
  *
  * The `with*()` methods wait for the headers and return a copy that shares the body stream.
  *
@@ -40,6 +46,7 @@ use Psr\Http\Message\StreamInterface;
  *
  * @see HttpClient::request
  * @see HttpClientOptions
+ * @see NetworkException
  */
 class CurlResponse implements ResponseInterface
 {
@@ -56,12 +63,13 @@ class CurlResponse implements ResponseInterface
     private bool $done               = false;
     private ?StreamInterface $body   = null;
     private bool $haveHeaders        = false;
+    private ?\Fiber $transfer        = null;
     private ?string $protocolVersion = null;
     private ?int $statusCode         = null;
     private ?string $reasonPhrase    = null;
     private ?int $errorNumber        = null;
     private ?string $errorMessage    = null;
-    private bool $startedFetching    = false;
+    private RequestInterface $request;
 
     /**
      * CurlResponse classes that need to start fetching. This is used to enable
@@ -77,8 +85,11 @@ class CurlResponse implements ResponseInterface
      *
      * @internal
      */
-    public function __construct(string $method, string $url, mixed $requestData, ?HttpClientOptions $options)
+    public function __construct(RequestInterface $request, HttpClientOptions $options)
     {
+        $method      = $request->getMethod();
+        $url         = (string) $request->getUri();
+        $requestData = $request->getBody();
         if (null === self::$fetchQueue) {
             Synchronized::run(self::class, static function () {
                 if (null === self::$fetchQueue) {
@@ -128,29 +139,26 @@ class CurlResponse implements ResponseInterface
                 \curl_setopt($this->curl, \CURLOPT_POSTFIELDS, $requestData);
                 break;
         }
-        $this->url    = $url;
-        $this->method = $method;
+        $this->request = $request;
+        $this->options = $options;
+        $this->url     = $url;
+        $this->method  = $method;
         $this->applyOptions($options);
         \curl_setopt($this->curl, \CURLOPT_HEADERFUNCTION, $this->curlHeaderFunction(...));
         \curl_setopt($this->curl, \CURLOPT_WRITEFUNCTION, $this->curlWriteFunction(...));
         \curl_setopt($this->curl, \CURLOPT_XFERINFOFUNCTION, $this->curlXferInfoFunction(...));
         $this->body = new ComposableStream(
             readFunction: function (int $length) {
-                if (null !== $this->errorNumber) {
-                    $this->throwError();
-                }
-
                 self::runQueue();
 
                 while ('' === $this->buffer && !$this->done) {
-                    // Block the current Fiber until something happens
-                    // with $this->stream
-                    \phasync::awaitFlag($this);
-                    if (null !== $this->errorNumber) {
-                        $this->throwError();
-                    }
+                    $this->awaitChange();
                 }
-                if ('' === $this->buffer && $this->done) {
+                if ('' === $this->buffer) {
+                    if (null !== $this->errorNumber) {
+                        throw $this->failure();
+                    }
+
                     return null;
                 }
                 $chunk        = \substr($this->buffer, 0, $length);
@@ -171,12 +179,12 @@ class CurlResponse implements ResponseInterface
          * done.
          */
         CurlMulti::await($this->curl);
-        $this->done = true;
-        \phasync::raiseFlag($this);
         if (0 !== ($errorNumber = \curl_errno($this->curl))) {
             $this->errorNumber  = $errorNumber;
             $this->errorMessage = \curl_error($this->curl);
         }
+        $this->done = true;
+        \phasync::raiseFlag($this);
     }
 
     public function withStatus(int $code, string $reasonPhrase = ''): ResponseInterface
@@ -262,12 +270,14 @@ class CurlResponse implements ResponseInterface
      * ```php
      * try {
      *     $status = $client->get('https://example.com/')->getStatusCode();
-     * } catch (\RuntimeException $e) {
-     *     // connection refused, DNS failure, timeout, too many redirects: $e->getCode() is cURL's error number
+     * } catch (\Psr\Http\Client\NetworkExceptionInterface $e) {
+     *     // connection refused, DNS failure, timeout: $e->getCode() is cURL's error number
      * }
      * ```
      *
-     * @throws \RuntimeException when the transfer failed
+     * @throws NetworkException when no response headers arrived because of a network failure
+     * @throws RequestException when the request is invalid
+     * @throws ClientException  for any other failure, such as too many redirects
      *
      * @see CurlResponse::getReasonPhrase
      */
@@ -275,20 +285,12 @@ class CurlResponse implements ResponseInterface
     {
         $this->waitForHeaders();
 
-        if (null !== $this->errorNumber) {
-            $this->throwError();
-        }
-
         return $this->statusCode;
     }
 
     public function getReasonPhrase(): string
     {
         $this->waitForHeaders();
-
-        if ($this->errorNumber > 0) {
-            return $this->errorMessage;
-        }
 
         return $this->reasonPhrase;
     }
@@ -337,12 +339,14 @@ class CurlResponse implements ResponseInterface
      * Return the body stream, without waiting for the transfer.
      *
      * Reading from the stream waits for data. The stream is read once and cannot be rewound.
-     * After a failed transfer a read can return an empty string, so check
-     * {@see CurlResponse::getStatusCode()} first.
+     * When the transfer failed, the read that reaches the failure throws a {@see NetworkException}
+     * (or the {@see ClientException} that matches the failure) instead of returning an empty string.
      *
      * ```php
      * $json = \json_decode((string) $client->get('https://example.com/data.json')->getBody(), true);
      * ```
+     *
+     * @throws ClientException from a read, when the transfer failed
      *
      * @see CurlResponse::getStatusCode
      */
@@ -402,16 +406,32 @@ class CurlResponse implements ResponseInterface
         return $this->uploaded;
     }
 
-    private function throwError(): void
+    private function failure(): ClientException
     {
-        throw new \RuntimeException($this->errorMessage ?? 'Error code ' . $this->errorNumber, $this->errorNumber);
+        $class = match ($this->errorNumber) {
+            \CURLE_UNSUPPORTED_PROTOCOL, \CURLE_URL_MALFORMAT          => RequestException::class,
+            \CURLE_TOO_MANY_REDIRECTS, \CURLE_BAD_CONTENT_ENCODING     => ClientException::class,
+            default                                                    => NetworkException::class,
+        };
+
+        return new $class($this->request, $this->errorMessage, $this->errorNumber);
     }
 
     private function curlHeaderFunction($curl, $header)
     {
         $trimmed = \trim($header);
-        if (empty($trimmed)) {
-            return \strlen($header);  // Ignore empty lines, which can occur in HTTP responses.
+        if ('' === $trimmed) {
+            // The end of a header block. The headers are complete unless this was an
+            // informational (1xx) block or a redirect that cURL is about to follow.
+            if (
+                $this->statusCode >= 200
+                && !(true === $this->options->followLocation && \in_array($this->statusCode, [301, 302, 303, 307, 308], true) && isset($this->responseHeaders['location']))
+            ) {
+                $this->haveHeaders = true;
+                \phasync::raiseFlag($this);
+            }
+
+            return \strlen($header);
         }
 
         if (\str_starts_with($trimmed, 'HTTP/')) {
@@ -441,7 +461,6 @@ class CurlResponse implements ResponseInterface
 
     private function curlWriteFunction(\CurlHandle $curl, string $chunk): int
     {
-        $this->haveHeaders = true;
         $this->buffer .= $chunk;
         \phasync::raiseFlag($this);
 
@@ -462,11 +481,27 @@ class CurlResponse implements ResponseInterface
     private function waitForHeaders(): void
     {
         self::runQueue();
-        while (!$this->haveHeaders && !$this->done && \is_resource($this->curl)) {
+        while (!$this->haveHeaders && !$this->done) {
+            $this->awaitChange();
+        }
+        if (!$this->haveHeaders) {
+            throw $this->failure();
+        }
+    }
+
+    /**
+     * Suspend until the transfer has something new. When the wait is interrupted, for example by
+     * a cancellation, the transfer is cancelled with it.
+     */
+    private function awaitChange(): void
+    {
+        try {
             \phasync::awaitFlag($this);
-            if (null !== $this->errorNumber) {
-                $this->throwError();
+        } catch (\Throwable $e) {
+            if (!$this->done) {
+                \phasync::cancel($this->transfer);
             }
+            throw $e;
         }
     }
 
@@ -518,14 +553,19 @@ class CurlResponse implements ResponseInterface
         }
     }
 
+    /**
+     * Start every queued transfer. Inside a coroutine they run in the background of its context;
+     * outside one they run to the end here, as that is the only way to drive the event loop.
+     */
     private static function runQueue(): void
     {
+        $start = static function () {
+            while (self::$fetchQueue->tryDequeue($next)) {
+                $next->transfer = \phasync::go($next->goCurl(...));
+            }
+        };
         if (!self::$fetchQueue->isEmpty()) {
-            \phasync::run(function () {
-                while (self::$fetchQueue->tryDequeue($next)) {
-                    \phasync::go($next->goCurl(...));
-                }
-            });
+            \phasync::isRunning() ? $start() : \phasync::run($start);
         }
     }
 }
