@@ -20,6 +20,8 @@ namespace phasync\HttpClient;
  * @see HttpClientOptions::overrideFrom
  *
  * @topic http-client
+ *
+ * @example examples/HttpClientOptions/1-defaults-and-overrides.php Defaults, and options for one request
  */
 class HttpClientOptions
 {

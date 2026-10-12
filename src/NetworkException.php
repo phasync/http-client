@@ -24,6 +24,8 @@ use Psr\Http\Client\NetworkExceptionInterface;
  * @see HttpClient::sendRequest
  *
  * @topic http-client
+ *
+ * @example examples/NetworkException/1-connection-refused.php Connection refused
  */
 class NetworkException extends ClientException implements NetworkExceptionInterface
 {

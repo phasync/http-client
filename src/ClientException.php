@@ -25,6 +25,8 @@ use Psr\Http\Message\RequestInterface;
  * @see HttpClient::sendRequest
  *
  * @topic http-client
+ *
+ * @example examples/ClientException/1-too-many-redirects.php Too many redirects
  */
 class ClientException extends \RuntimeException implements ClientExceptionInterface
 {

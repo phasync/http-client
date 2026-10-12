@@ -30,6 +30,8 @@ use phasync\Psr\ComposableStream;
  * @see HttpClient::post
  *
  * @topic streams-and-files
+ *
+ * @example examples/MultipartStream/1-upload-a-file.php Upload a file with form fields
  */
 final class MultipartStream extends ComposableStream implements MultipartStreamInterface
 {

@@ -49,6 +49,8 @@ use Psr\Http\Message\StreamInterface;
  * @see NetworkException
  *
  * @topic http-client
+ *
+ * @example examples/CurlResponse/1-read-the-body-as-it-arrives.php Read the body as it arrives
  */
 class CurlResponse implements ResponseInterface
 {

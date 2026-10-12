@@ -59,6 +59,9 @@ use Psr\Http\Message\UriInterface;
  * @see phasync::go
  *
  * @topic http-client
+ *
+ * @example examples/HttpClient/1-two-requests-at-once.php Two requests that run together
+ * @example examples/HttpClient/2-inside-coroutines.php Requests in coroutines
  */
 final class HttpClient implements ClientInterface
 {
@@ -128,6 +131,8 @@ final class HttpClient implements ClientInterface
      * @param \Closure(RequestInterface,ClientInterface):ResponseInterface $middleware
      *
      * @see HttpClient::sendRequest
+     *
+     * @example examples/HttpClient.addMiddlewareFunction/1-a-request-id-and-a-log.php A header and a log line for every request
      */
     public function addMiddlewareFunction(\Closure $middleware): void
     {
@@ -174,6 +179,8 @@ final class HttpClient implements ClientInterface
      *
      * @see HttpClient::request
      * @see HttpClient::addMiddlewareFunction
+     *
+     * @example examples/HttpClient.sendRequest/1-psr-18.php A PSR-18 request, and an error status
      */
     public function sendRequest(RequestInterface $request): ResponseInterface
     {
@@ -202,6 +209,8 @@ final class HttpClient implements ClientInterface
      *
      * @see HttpClient::sendRequest
      * @see HttpClient::request
+     *
+     * @example examples/HttpClient.sendAsyncRequest/1-send-now-read-later.php Send several, read them later
      */
     public function sendAsyncRequest(RequestInterface $request): ResponseInterface
     {
@@ -282,6 +291,8 @@ final class HttpClient implements ClientInterface
      * @see HttpClient::get
      * @see HttpClient::post
      * @see HttpClient::sendRequest
+     *
+     * @example examples/HttpClient.request/1-json-and-headers.php JSON, headers and a query string
      */
     public function request(string $method, string|UriInterface $url, mixed $requestData = null, array|HttpClientOptions|null $options = null): ResponseInterface
     {
@@ -385,6 +396,8 @@ final class HttpClient implements ClientInterface
      * @see HttpClient::put
      * @see HttpClient::request
      * @see MultipartStream
+     *
+     * @example examples/HttpClient.post/1-a-form.php Post a form
      */
     public function post(string|UriInterface $url, mixed $requestData, array|HttpClientOptions|null $options = null): ResponseInterface
     {

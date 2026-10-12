@@ -20,6 +20,8 @@ use Psr\Http\Message\StreamInterface;
  * @see HttpClient::post
  *
  * @topic streams-and-files
+ *
+ * @example examples/MultipartStreamInterface/1-the-content-type-comes-with-the-body.php The Content-Type comes with the body
  */
 interface MultipartStreamInterface extends StreamInterface
 {

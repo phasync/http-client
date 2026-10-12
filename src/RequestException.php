@@ -23,6 +23,8 @@ use Psr\Http\Client\RequestExceptionInterface;
  * @see HttpClient::sendRequest
  *
  * @topic http-client
+ *
+ * @example examples/RequestException/1-an-unsupported-scheme.php Requests that cannot be sent
  */
 class RequestException extends ClientException implements RequestExceptionInterface
 {
