@@ -47,6 +47,8 @@ use Psr\Http\Message\StreamInterface;
  * @see HttpClient::request
  * @see HttpClientOptions
  * @see NetworkException
+ *
+ * @topic http-client
  */
 class CurlResponse implements ResponseInterface
 {

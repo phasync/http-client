@@ -18,6 +18,8 @@ namespace phasync\HttpClient;
  *
  * @see HttpClient
  * @see HttpClientOptions::overrideFrom
+ *
+ * @topic http-client
  */
 class HttpClientOptions
 {

@@ -28,6 +28,8 @@ use phasync\Psr\ComposableStream;
  *
  * @see MultipartStreamInterface
  * @see HttpClient::post
+ *
+ * @topic streams-and-files
  */
 final class MultipartStream extends ComposableStream implements MultipartStreamInterface
 {

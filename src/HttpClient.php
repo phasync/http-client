@@ -57,6 +57,8 @@ use Psr\Http\Message\UriInterface;
  * @see ClientException
  * @see MultipartStream
  * @see phasync::go
+ *
+ * @topic http-client
  */
 final class HttpClient implements ClientInterface
 {

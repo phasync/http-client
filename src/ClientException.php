@@ -23,9 +23,12 @@ use Psr\Http\Message\RequestInterface;
  * @see NetworkException
  * @see RequestException
  * @see HttpClient::sendRequest
+ *
+ * @topic http-client
  */
 class ClientException extends \RuntimeException implements ClientExceptionInterface
 {
+    /** An exception about `$request`, which {@see ClientException::getRequest()} returns. */
     public function __construct(private readonly RequestInterface $request, string $message, int $code)
     {
         parent::__construct($message, $code);

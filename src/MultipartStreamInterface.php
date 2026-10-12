@@ -18,6 +18,8 @@ use Psr\Http\Message\StreamInterface;
  *
  * @see MultipartStream
  * @see HttpClient::post
+ *
+ * @topic streams-and-files
  */
 interface MultipartStreamInterface extends StreamInterface
 {

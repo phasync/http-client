@@ -21,6 +21,8 @@ use Psr\Http\Client\RequestExceptionInterface;
  * @see NetworkException
  * @see ClientException
  * @see HttpClient::sendRequest
+ *
+ * @topic http-client
  */
 class RequestException extends ClientException implements RequestExceptionInterface
 {
