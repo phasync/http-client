@@ -135,7 +135,7 @@ test('sendRequest does not change the request', function () {
     $request = Request::create('POST', TestServer::baseUrl() . '/post')
         ->withHeader('X-Test', 'yes')
         ->withHeader('User-Agent', 'agent')
-        ->withBody(phasync\Psr\StreamFactory::create('payload'));
+        ->withBody(new phasync\Psr\StringStream('payload'));
     $headers = $request->getHeaders();
 
     $client->sendRequest($request);

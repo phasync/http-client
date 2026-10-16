@@ -3,7 +3,7 @@
 namespace phasync\HttpClient;
 
 use phasync\Psr\Request;
-use phasync\Psr\StreamFactory;
+use phasync\Psr\StringStream;
 use Psr\Http\Client\ClientInterface;
 use Psr\Http\Message\RequestInterface;
 use Psr\Http\Message\ResponseInterface;
@@ -337,7 +337,7 @@ final class HttpClient implements ClientInterface
         foreach ($headers as $name => $values) {
             $request = $request->withHeader($name, $values);
         }
-        $request = $request->withBody(StreamFactory::create($requestData));
+        $request = $request->withBody($requestData instanceof StreamInterface ? $requestData : new StringStream((string) $requestData));
 
         $oldOptions    = $this->options;
         $this->options = $options;
