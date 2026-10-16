@@ -6,7 +6,7 @@ use phasync\Psr\Request;
 
 $client = new HttpClient();
 
-foreach (['foo://example.com/', 'http:///no-host'] as $url) {
+foreach (['foo://example.com/', '/no-host'] as $url) {
     try {
         $client->sendRequest(Request::create('GET', $url));
     } catch (RequestException $e) {
