@@ -4,7 +4,7 @@ namespace phasync\HttpClient;
 
 use phasync;
 use phasync\Psr\ComposableStream;
-use phasync\Services\CurlMulti;
+use phasync\Services\CurlAwaiter;
 use phasync\Util\Queue;
 use phasync\Util\QueueInterface;
 use phasync\Util\Synchronized;
@@ -182,7 +182,7 @@ class CurlResponse implements ResponseInterface
          * Start the curl handle via the event loop, and return when it is
          * done.
          */
-        CurlMulti::await($this->curl);
+        CurlAwaiter::await($this->curl);
         if (0 !== ($errorNumber = \curl_errno($this->curl))) {
             $this->errorNumber  = $errorNumber;
             $this->errorMessage = \curl_error($this->curl);
