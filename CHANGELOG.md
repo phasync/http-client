@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.0.1-RC1 (2026-10-29)
 
 - `CurlResponse::getHeaders()` keeps header names as the server sent them (`Content-Type`, not `content-type`), as PSR-7 requires; lookups stay case-insensitive. (#10)
 - The body's `getSize()` is the body's length once it has arrived, and its `Content-Length` before that when the body is not compressed; it was always null. (#11)
