@@ -60,3 +60,25 @@ test('a middleware can short-circuit without calling $next', function () {
 
     expect($response->getStatusCode())->toBe(204);
 });
+
+test("request()'s options are for its own request only, also while a middleware waits (#12)", function () {
+    $client = new HttpClient();
+    $client->addMiddlewareFunction(function (RequestInterface $request, ClientInterface $next): ResponseInterface {
+        phasync::sleep(0.05); // the other coroutine uses the client meanwhile
+
+        return $next->sendRequest($request);
+    });
+    [$mine, $other] = phasync::run(function () use ($client) {
+        $mine  = phasync::go(fn () => $client->request('GET', TestServer::baseUrl() . '/headers', null, ['userAgent' => 'mine']));
+        $other = phasync::go(function () use ($client) {
+            phasync::sleep(0.01);
+
+            return $client->get(TestServer::baseUrl() . '/headers');
+        });
+
+        return [\json_decode((string) phasync::await($mine)->getBody(), true), \json_decode((string) phasync::await($other)->getBody(), true)];
+    });
+
+    expect($mine['headers']['user-agent'] ?? null)->toBe('mine');
+    expect($other['headers']['user-agent'] ?? null)->not->toBe('mine');
+});

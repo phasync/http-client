@@ -92,3 +92,17 @@ test('PSR-18 sendRequest() accepts a PSR-7 request built via phasync\\Psr\\Reque
     $body = \json_decode((string) $response->getBody(), true);
     expect($body['headers']['x-test'])->toBe('yes');
 });
+
+test('getHeaders() keeps the names as the server sent them (#10)', function () {
+    $response = (new HttpClient())->get(TestServer::baseUrl() . '/get');
+
+    expect(\array_keys($response->getHeaders()))->toContain('Date', 'Content-Type');
+    expect($response->getHeader('content-type'))->toBe($response->getHeaders()['Content-Type']);
+});
+
+test("the body's getSize() is the body's length once it has arrived (#11)", function () {
+    $response = (new HttpClient())->get(TestServer::baseUrl() . '/get');
+    $body     = (string) $response->getBody();
+
+    expect($response->getBody()->getSize())->toBe(\strlen($body));
+});

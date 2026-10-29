@@ -67,6 +67,12 @@ final class HttpClient implements ClientInterface
 {
     private HttpClientOptions $options;
 
+    /** @var \WeakMap<\Fiber, HttpClientOptions> request()'s options, for its own coroutine while the middleware runs */
+    private \WeakMap $requestOptions;
+
+    /** request()'s options outside of any Fiber */
+    private ?HttpClientOptions $mainOptions = null;
+
     /**
      * The head of the middleware chain. Initially a terminal handler that
      * performs the real request; each {@see HttpClient::addMiddlewareFunction()}
@@ -93,8 +99,9 @@ final class HttpClient implements ClientInterface
      */
     public function __construct(array|HttpClientOptions $defaultRequestOptions = [])
     {
-        $this->options = HttpClientOptions::create($defaultRequestOptions);
-        $this->handler = new class($this) implements ClientInterface {
+        $this->options        = HttpClientOptions::create($defaultRequestOptions);
+        $this->requestOptions = new \WeakMap();
+        $this->handler        = new class($this) implements ClientInterface {
             public function __construct(private HttpClient $client)
             {
             }
@@ -247,7 +254,21 @@ final class HttpClient implements ClientInterface
             $options['headers'][] = 'Content-Type: ' . $body->getContentType();
         }
 
-        return new CurlResponse($request, $this->options->overrideFrom($options));
+        $fiber = \Fiber::getCurrent();
+        $base  = (null === $fiber ? $this->mainOptions : ($this->requestOptions[$fiber] ?? null)) ?? $this->options;
+
+        return new CurlResponse($request, $base->overrideFrom($options));
+    }
+
+    private function setRequestOptions(?\Fiber $fiber, ?HttpClientOptions $options): void
+    {
+        if (null === $fiber) {
+            $this->mainOptions = $options;
+        } elseif (null === $options) {
+            unset($this->requestOptions[$fiber]);
+        } else {
+            $this->requestOptions[$fiber] = $options;
+        }
     }
 
     /**
@@ -339,12 +360,14 @@ final class HttpClient implements ClientInterface
         }
         $request = $request->withBody($requestData instanceof StreamInterface ? $requestData : new StringStream((string) $requestData));
 
-        $oldOptions    = $this->options;
-        $this->options = $options;
+        // Only this coroutine's request gets them: another coroutine may use the client while a middleware waits
+        $fiber = \Fiber::getCurrent();
+        $outer = null === $fiber ? $this->mainOptions : ($this->requestOptions[$fiber] ?? null);
+        $this->setRequestOptions($fiber, $options);
         try {
             return $this->sendAsyncRequest($request);
         } finally {
-            $this->options = $oldOptions;
+            $this->setRequestOptions($fiber, $outer);
         }
     }
 

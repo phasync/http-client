@@ -59,6 +59,10 @@ class CurlResponse implements ResponseInterface
     public readonly string $method;
     private \CurlHandle $curl;
     private array $responseHeaders   = [];
+    /** @var array<string, string> the name of each header as received or set, by its lowercase */
+    private array $headerNames       = [];
+    /** Bytes of the body cURL has handed over */
+    private int $received            = 0;
     private string $buffer           = '';
     private ?int $downloadSize       = null;
     private ?int $downloaded         = null;
@@ -170,7 +174,7 @@ class CurlResponse implements ResponseInterface
 
                 return $chunk;
             },
-            getSizeFunction: $this->getDownloadSize()
+            getSizeFunction: $this->bodySize(...)
         );
 
         self::$fetchQueue->enqueue($this);
@@ -218,6 +222,7 @@ class CurlResponse implements ResponseInterface
 
         $c                                      = clone $this;
         $c->responseHeaders[\strtolower($name)] = \is_array($value) ? $value : [(string) $value];
+        $c->headerNames[\strtolower($name)]     = $name;
 
         return $c;
     }
@@ -227,6 +232,7 @@ class CurlResponse implements ResponseInterface
         $this->waitForHeaders();
 
         $c    = clone $this;
+        $c->headerNames[\strtolower($name)] ??= $name;
         $name = \strtolower($name);
         if (\is_array($value)) {
             foreach ($value as $v) {
@@ -244,7 +250,7 @@ class CurlResponse implements ResponseInterface
         $this->waitForHeaders();
 
         $c = clone $this;
-        unset($c->responseHeaders[\strtolower($name)]);
+        unset($c->responseHeaders[\strtolower($name)], $c->headerNames[\strtolower($name)]);
 
         return $c;
     }
@@ -335,8 +341,12 @@ class CurlResponse implements ResponseInterface
     public function getHeaders(): array
     {
         $this->waitForHeaders();
+        $headers = [];
+        foreach ($this->responseHeaders as $lower => $values) {
+            $headers[$this->headerNames[$lower]] = $values;
+        }
 
-        return $this->responseHeaders;
+        return $headers;
     }
 
     /**
@@ -421,6 +431,19 @@ class CurlResponse implements ResponseInterface
         return new $class($this->request, $this->errorMessage, $this->errorNumber);
     }
 
+    /** The body's size: all of it once the transfer is done, else its Content-Length when it is not compressed. */
+    private function bodySize(): ?int
+    {
+        if ($this->done) {
+            return $this->received;
+        }
+        if (!$this->haveHeaders || isset($this->responseHeaders['content-encoding']) || !isset($this->responseHeaders['content-length'])) {
+            return null;
+        }
+
+        return \ctype_digit($length = $this->responseHeaders['content-length'][0]) ? (int) $length : null;
+    }
+
     private function curlHeaderFunction($curl, $header)
     {
         $trimmed = \trim($header);
@@ -447,6 +470,7 @@ class CurlResponse implements ResponseInterface
             $this->statusCode           = \intval($code);
             $this->reasonPhrase         = $phrase ?: '';
             $this->responseHeaders      = [];
+            $this->headerNames          = [];
 
             return \strlen($header);
         }
@@ -454,10 +478,10 @@ class CurlResponse implements ResponseInterface
         // Parse headers
         $parts = \explode(':', $trimmed, 2);
         if (2 === \count($parts)) {
-            list($key, $value)             = $parts;
-            $key                           = \strtolower(\trim($key));
-            $value                         = \trim($value);
-            $this->responseHeaders[$key][] = $value;
+            $name                            = \trim($parts[0]);
+            $key                             = \strtolower($name);
+            $this->headerNames[$key] ??= $name;
+            $this->responseHeaders[$key][]   = \trim($parts[1]);
         }
 
         return \strlen($header);
@@ -466,6 +490,7 @@ class CurlResponse implements ResponseInterface
     private function curlWriteFunction(\CurlHandle $curl, string $chunk): int
     {
         $this->buffer .= $chunk;
+        $this->received += \strlen($chunk);
         \phasync::raiseFlag($this);
 
         return \strlen($chunk);
